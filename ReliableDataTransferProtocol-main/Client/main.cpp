@@ -15,165 +15,177 @@
 
 using namespace std;
 
-static const int MAXIMUM_SEGMENT_SIZE = 508;
+#define maxSegSize  508
 
-struct packet {
-    uint16_t cksum;
+struct packet 
+{
+    uint16_t checkSum;
     uint16_t len;
-    uint32_t seqno;
+    uint32_t seqNo;
     char data [500];
 };
-
-
-struct ack_packet {
-    uint16_t cksum;
+struct packetAck 
+{
+    uint16_t checkSum;
     uint16_t len;
-    uint32_t ackno;
+    uint32_t ackNo;
 };
 
-packet create_packet(string file_name){
-    struct packet p;
-    strcpy(p.data, file_name.c_str());
-    p.seqno = 0;
-    p.cksum = 0;
-    p.len = file_name.length() + sizeof(p.cksum) + sizeof(p.len) + sizeof(p.seqno);
-    return p;
+vector<string> readInfo()
+{
+    string fName = "info.txt";
+    vector<string> infos;
+    string line;
+    ifstream f;
+    f.open(fName);
+    while(getline(f, line))
+    {
+        infos.push_back(line);
+    }
+    return infos;
 }
-uint16_t get_ack_checksum(uint16_t len,  uint32_t ackNo){
+void writeFile (string fName, string data)
+{
+    ofstream f_stream(fName.c_str());
+    f_stream.write(data.c_str(), data.length());
+}
+uint16_t getAckChecksum(uint16_t len , uint32_t ackNo)
+{
     uint32_t sum = 0;
     sum += len;
     sum += ackNo;
-    while(sum >> 16)
+    while (sum >> 16)
+    {
         sum = (sum & 0xFFFF) + (sum >> 16);
-    uint16_t CSum = (uint16_t)(~sum);
-    return CSum;
+    }
+    uint16_t Sum = (uint16_t) (~sum);
+    return Sum;
 }
-
-uint16_t get_data_checksum(string content, uint16_t len, uint32_t seqNo){
+uint16_t getDataChecksum(string content, uint16_t len , uint32_t seqNo)
+{
     uint32_t sum = 0;
     sum += len;
     sum += seqNo;
-    int n;
-    n = content.length();
-    char arr[n+1];
-    strcpy(arr, content.c_str());
-    for (int i = 0; i < n; i++){
-        sum += arr[i];
+    char a[content.length() + 1];
+    strcpy(a, content.c_str());
+    for (int i = 0; i < content.length(); i++)
+    {
+        sum += a[i];
     }
-    while (sum >> 16){
+    while (sum >> 16)
+    {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
-    uint16_t OCSum = (uint16_t) (~sum);
-    return OCSum;
+    return (uint16_t) (~sum);
 }
-
-void send_ack(int client_socket, struct sockaddr_in server_address, int seqNum){
-    struct ack_packet ack;
-    ack.ackno = seqNum;
-    ack.len = sizeof(ack);
-    ack.cksum = get_ack_checksum(ack.len, ack.ackno);
-    char* ack_buf = new char[MAXIMUM_SEGMENT_SIZE];
-    memset(ack_buf, 0, MAXIMUM_SEGMENT_SIZE);
-    memcpy(ack_buf, &ack, sizeof(ack));
-    ssize_t bytesSent = sendto(client_socket, ack_buf, MAXIMUM_SEGMENT_SIZE, 0, (struct sockaddr *)&server_address, sizeof(struct sockaddr));
-    if (bytesSent == -1) {
-        perror("error in sending the ack ! ");
-        exit(1);
-    } else {
-        cout << "Ack for packet seq. Num " << seqNum << " is sent." << endl << flush;
-    }
+packet createPacket(string fName)
+{
+    struct packet p;
+    strcpy(p.data, fName.c_str());
+    p.checkSum = 0;
+    p.seqNo = 0;
+    p.len = sizeof(p.checkSum) + sizeof(p.len) + sizeof(p.seqNo) + fName.length();
+    return p;
 }
-
-vector<string> readCommand(){
-    string fileName = "command.txt";
-    vector<string> commands;
-    string line;
-    ifstream f;
-    f.open(fileName);
-    while(getline(f, line))
+void sendAck(int clientSocket, struct sockaddr_in serverAddress, int seqNo)
+{
+    struct packetAck  pAck;
+    pAck.ackNo = seqNo;
+    pAck.len = sizeof(pAck);
+    pAck.checkSum = getAckChecksum(pAck.len, pAck.ackNo);
+    char* bufferAck = new char[maxSegSize];
+    memset(bufferAck, 0, maxSegSize);
+    memcpy(bufferAck, &pAck, sizeof(pAck));
+    ssize_t bytesSent = sendto(clientSocket, bufferAck, maxSegSize, 0, (struct sockaddr *)&serverAddress, sizeof(struct sockaddr));
+    if (bytesSent == -1)
     {
-        commands.push_back(line);
+        cout << "Sending packet failure" << endl;
+        exit(1);
     }
-    return commands;
+    else
+    {
+        cout << "Ack for packet with seq. number " << seqNo << " is sent successfully" << endl;
+    }
 }
 
-void writeFile (string fileName, string content){
-    ofstream f_stream(fileName.c_str());
-    f_stream.write(content.c_str(), content.length());
-}
 
-int main() {
-    vector<string> commands = readCommand();
-    string IP_Address = commands[0];
-    int port = stoi(commands[1]);
-    string fileName = commands[2];
-    struct sockaddr_in server_address;
-    int client_socket;
-    memset(&client_socket, '0', sizeof(client_socket));
-    if ((client_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-        perror("failed");
-        exit(1);
+int main() 
+{
+    vector<string> infos = readInfo();
+    string ipAdr = infos[0];
+    int port = stoi(infos[1]);
+    string fName = infos[2];
+    struct sockaddr_in serverAddress;
+    int clientSocket;
+    memset(&clientSocket, '0', sizeof(clientSocket));
+    if ((clientSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
+    {
+        cout << "failure" << endl;
+        return 1;
     }
-
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sin_family = AF_INET;
-    server_address.sin_addr.s_addr = INADDR_ANY;
-    server_address.sin_port = htons(port);
-    cout << "File Name is : " << fileName << " The lenght of the Name : " << fileName.size() << endl << flush;
-
-    struct packet fileName_packet = create_packet(fileName);
-    char* buffer = new char[MAXIMUM_SEGMENT_SIZE ];
-    memset(buffer, 0, MAXIMUM_SEGMENT_SIZE );
-    memcpy(buffer, &fileName_packet, sizeof(fileName_packet));
-    ssize_t bytesSent = sendto(client_socket, buffer, MAXIMUM_SEGMENT_SIZE , 0, (struct sockaddr *)&server_address, sizeof(struct sockaddr));
-    if (bytesSent == -1) {
-        perror("Error in sending the file name! ");
-        exit(1);
-    } else {
-        cout << "Client Sent The file Name ." << endl << flush;
+    memset(&serverAddress, 0, sizeof(serverAddress));
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = INADDR_ANY;
+    serverAddress.sin_port = htons(port);
+    cout << "File Name: " << fName << " size: " << fName.size() << endl;
+    struct packet fName_packet = createPacket(fName);
+    char* buffer = new char[maxSegSize];
+    memset(buffer, 0, maxSegSize);
+    memcpy(buffer, &fName_packet, sizeof(fName_packet));
+    ssize_t bytesSent = sendto(clientSocket, buffer, maxSegSize , 0, (struct sockaddr *)&serverAddress, sizeof(struct sockaddr));
+    if (bytesSent == -1) 
+    {
+        cout << "Sending file name failure" << endl;
+        return 2;
+    } 
+    else 
+    {
+        cout << "File name sent" << endl;
     }
-    char rec_buffer[MAXIMUM_SEGMENT_SIZE];
-    socklen_t addrlen = sizeof(server_address);
-    ssize_t Received_bytes = recvfrom(client_socket, rec_buffer, MAXIMUM_SEGMENT_SIZE, 0, (struct sockaddr*)&server_address, &addrlen);
-    if (Received_bytes < 0){
-        perror("error in receiving file name ack .");
-        exit(1);
+    char recBuffer[maxSegSize];
+    socklen_t adrLen = sizeof(serverAddress);
+    ssize_t receivedBytes = recvfrom(clientSocket, recBuffer, maxSegSize, 0, (struct sockaddr*)&serverAddress, &adrLen);
+    if (receivedBytes < 0)
+    {
+        cout << "Sending filename acknowlegment failure";
+        return 3;
     }
-    auto* ackPacket = (struct ack_packet*) rec_buffer;
-    cout << "Number of packets " << ackPacket->len << endl;
-    long numberOfPackets = ackPacket->len;
-    string fileContents [numberOfPackets];
-    bool recieved[numberOfPackets];
-    int i = 1;
-    int expectedSeqNum = 0;
-    while (i <= numberOfPackets){
-        memset(rec_buffer, 0, MAXIMUM_SEGMENT_SIZE);
-        ssize_t bytesReceived = recvfrom(client_socket, rec_buffer, MAXIMUM_SEGMENT_SIZE, 0, (struct sockaddr*)&server_address, &addrlen);
-        if (bytesReceived == -1){
-            perror("Error receiving data packet.");
+    auto* ackPacket = (struct packetAck *) recBuffer;
+    cout << "Number of packets: " << ackPacket->len << endl;
+    long packetsNum = ackPacket->len;
+    string fData [packetsNum];
+    bool recieved[packetsNum];
+    int idx = 1;
+    while (idx <= packetsNum)
+    {
+        memset(recBuffer, 0, maxSegSize);
+        ssize_t bytesReceived = recvfrom(clientSocket, recBuffer, maxSegSize, 0, (struct sockaddr*)&serverAddress, &adrLen);
+        if (bytesReceived == -1)
+        {
+            cout << "Packet recieving failure" << endl;
             break;
         }
-        auto* data_packet = (struct packet*) rec_buffer;
-        cout <<"packet "<<i<<" received" <<endl<<flush;
-        cout << "Sequence Number : " << data_packet->seqno << endl<<flush;
-        int len = data_packet->len;
-        for (int j = 0 ; j < len ; j++){
-            fileContents[data_packet->seqno] += data_packet->data[j];
+        auto* pac = (struct packet*) recBuffer;
+        cout <<"packet number: "<< idx <<" received successfully" <<endl;
+        cout << "Sequence number: " << pac->seqNo << endl;
+        int len = pac->len;
+        for (int j = 0 ; j < len ; j++)
+        {
+            fData[pac->seqNo] += pac->data[j];
         }
-        if (get_data_checksum(fileContents[data_packet->seqno], data_packet->len, data_packet->seqno) != data_packet->cksum){
-            cout << "corrupted data packet !" << endl << flush;
+        if (getDataChecksum(fData[pac->seqNo], pac->len, pac->seqNo) != pac->checkSum)
+        {
+            cout << "Packet data is corrupted" << endl;
         }
-        send_ack(client_socket, server_address , data_packet->seqno);
-        i++;
+        sendAck(clientSocket, serverAddress , pac->seqNo);
+        idx++;
     }
     string content = "";
-    for (int i = 0; i < numberOfPackets ; i++){
-        content += fileContents[i];
+    for (int i = 0; i < packetsNum ; i++)
+    {
+        content += fData[i];
     }
-    writeFile(fileName, content);
-    cout << "File is received successfully . " << endl << flush;
-
-
+    writeFile(fName, content);
+    cout << "File is sent successfully" << endl;
     return 0;
-
 }
