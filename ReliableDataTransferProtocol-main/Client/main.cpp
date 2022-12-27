@@ -32,7 +32,7 @@ struct ack_packet {
 };
 
 packet create_packet(string file_name){
-    struct packet p{};
+    struct packet p;
     strcpy(p.data, file_name.c_str());
     p.seqno = 0;
     p.cksum = 0;
@@ -143,7 +143,7 @@ int main() {
     cout << "Number of packets " << ackPacket->len << endl;
     long numberOfPackets = ackPacket->len;
     string fileContents [numberOfPackets];
-    bool recieved[numberOfPackets] = {false};
+    bool recieved[numberOfPackets];
     int i = 1;
     int expectedSeqNum = 0;
     while (i <= numberOfPackets){
