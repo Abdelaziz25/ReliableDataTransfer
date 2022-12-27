@@ -52,7 +52,19 @@ double plp;
 vector<packetNotSent> packetNotSents;
 vector<packet> packetsSent;
 
-
+    int Base_packet_number = 0;
+    long SentBytes = 0;
+    int Sst = 128;
+    bool Flag = true;
+    int SeqNum = 0;
+    long SentPacketsNotAcked = 0;
+    FSMState St = slowStart;
+    long NumberOfDupAcks = 0;
+    int LastAckedSeqNum = -1;
+    bool StillExistAcks = true;
+    char Rec_buf[maxSegSize];
+    socklen_t ClientAddressLength = sizeof(struct sockaddr);
+    int AlreadySentPackets = 0;
 void handle_client_request(int serverSocket, int client_fd, sockaddr_in client_addr, char rec_buffer [] , int bufferSize);
 void sendTheData_HandleCongesion (int client_fd, struct sockaddr_in client_addr , vector<string> data);
 bool send_packet(int client_fd, struct sockaddr_in client_addr , string temp_packet_string, int seqNum);
@@ -229,20 +241,9 @@ int main()
     return 0;
 }
 
-void handle_client_request(int serverSocket, int client_fd, struct sockaddr_in client_addr, char rec_buffer [] , int bufferSize) {
-
-     auto* data_packet = (struct packet*) rec_buffer;
-     string fName = string(data_packet->data);
-     cout << "requested file name from client  : " << fName <<"\n" << " , Lenght : " << fName.size() << endl;
-     int fileSize = checkFileExistence(fName);
-     if (fileSize == -1){
-        return;
-     }
-     int numberOfPackets = ceil(fileSize * 1.0 / ChunkSize);
-     cout << "File Size : " << fileSize << " Bytes , Num. of chuncks : " << numberOfPackets << endl << flush;
-
-     /** send ack to file name **/
-     struct packetAck ack;
+void send_ack_file_name( int client_fd,string fName,int numberOfPackets,struct sockaddr_in client_addr)
+{
+    struct packetAck ack;
      ack.checkSum = 0;
      ack.len = numberOfPackets;
      ack.ackno = 0;
@@ -265,216 +266,27 @@ void handle_client_request(int serverSocket, int client_fd, struct sockaddr_in c
 
      /** start sending data and handling congestion control using the SM **/
      sendTheData_HandleCongesion(client_fd, client_addr, dataPackets);
-
 }
 
-void sendTheData_HandleCongesion (int client_fd, struct sockaddr_in client_addr , vector<string> data){
-    ofstream myFile_Handler;
-    // File Open
-    myFile_Handler.open("File_1.txt");
+void handle_client_request(int serverSocket, int client_fd, struct sockaddr_in client_addr, char rec_buffer [] , int bufferSize) {
 
-    int cwnd_base = 0;
-    double cwnd = 1;
-    //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-    // Write to the file
-    myFile_Handler << cwnd << endl;
-    int base_packet_number = 0;
-    long sentBytes = 0;
-    int sst = 128;
-    bool flag = true;
-    int seqNum = 0;
-    long sentPacketsNotAcked = 0;
-    FSMState st = slowStart;
-    long numberOfDupAcks = 0;
-    int lastAckedSeqNum = -1;
-    bool stillExistAcks = true;
-    char rec_buf[maxSegSize];
-    socklen_t clientAddressLength = sizeof(struct sockaddr);
-    int totalPackets = data.size();
-    int alreadySentPackets = 0;
+     auto* data_packet = (struct packet*) rec_buffer;
+     string fName = string(data_packet->data);
+     cout << "requested file name from client  : " << fName <<"\n" << " , Lenght : " << fName.size() << endl;
+     int fileSize = checkFileExistence(fName);
+     if (fileSize == -1){
+        return;
+     }
+     int numberOfPackets = ceil(fileSize * 1.0 / ChunkSize);
+     cout << "File Size : " << fileSize << " Bytes , Num. of chuncks : " << numberOfPackets << endl << flush;
 
-    while (flag){
+     /** send ack to file name **/
+     send_ack_file_name(client_fd,fName, numberOfPackets,client_addr);
+}
 
-        /**
-        this part will run first to send first datagram as stated in pdf.
-        **/
-        while(cwnd_base < cwnd && alreadySentPackets + packetNotSents.size() < totalPackets){
-            seqNum = base_packet_number + cwnd_base;
-            string temp_packet_string = data[seqNum];
-            /**
-                in case error simulated won't send the packet so the seqnumber will not correct at the receiver so will send duplicate ack.
-            **/
-            bool isSent = send_packet(client_fd, client_addr, temp_packet_string,seqNum);
-            if (isSent == false) {
-                perror("Error sending data packet ! ");
-                //exit(1);
-            } else {
-                sentPacketsNotAcked++;
-                alreadySentPackets++;
-                cout << "Sent Seq Num : " << seqNum << endl << flush;
-            }
-            cwnd_base++;
-        }
-	    //cout << "///////////////////////////////////"<< "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-	    //cout << "///////////////////////////////////"<< " base : " << cwnd_base << endl << flush;
-
-        /*** receiving ACKs ***/
-        if (sentPacketsNotAcked > 0){
-            stillExistAcks = true;
-            while (stillExistAcks){
-                cout << "waiting acwnd_baseck " << endl << flush;
-                ssize_t receivedBytes = recvfrom(client_fd, rec_buf, AckPacketSize, 0, (struct sockaddr*)&client_addr, &clientAddressLength);
-                if (receivedBytes < 0){
-                     perror("error receiving bytes ! ");
-                     exit(1);
-                }
-                else if (receivedBytes != AckPacketSize){
-                     cout << "Expecting Ack Got Something Else" << endl << flush;
-                     exit(1);
-                }
-                else {
-
-                    auto ack = (packetAck*) malloc(sizeof(packetAck));
-                    memcpy(ack, rec_buf, AckPacketSize);
-                    cout << "Ack. " << ack->ackno << " Received." << endl << flush;
-
-                    if (getAckChecksum(ack->len, ack->ackno) != ack->checkSum){
-                        cout << "Corrupt Ack. received" << endl << flush ;
-                    }
-
-                    int ack_seqNo = ack->ackno;
-                    if (lastAckedSeqNum == ack_seqNo){
-
-                        numberOfDupAcks++;
-                        sentPacketsNotAcked--;
-                        if (st == fastRecovery){
-                            cwnd++;
-                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                            // Write to the file
-                            myFile_Handler << cwnd << endl;
-                        } else if (numberOfDupAcks == 3){
-                            sst = cwnd / 2;
-                            cwnd = sst + 3;
-                            cout << "///////////////////////////////////////////////////////////////// Triple duplicate Ack /////////////////////////////////////////////////////////////////////////" << endl;
-                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                            // Write to the file
-                            myFile_Handler << cwnd << endl;
-                            st = fastRecovery;
-                            /** retransmit the lost packet **/
-                            seqNum = ack_seqNo;
-                            bool found = false;
-                            for (int j = 0; j < packetNotSents.size() ;j++){
-                                packetNotSent nspkt = packetNotSents[j];
-                                if (nspkt.seqNo == seqNum){
-                                      found = true;
-                                      string temp_packet_string = data[seqNum];
-                                      struct packet data_packet = createPacket(temp_packet_string, seqNum);
-                                      char sendBuffer [maxSegSize];
-                                      memset(sendBuffer, 0, maxSegSize);
-                                      memcpy(sendBuffer, &data_packet, sizeof(data_packet));
-                                      ssize_t bytesSent = sendto(client_fd, sendBuffer, maxSegSize, 0, (struct sockaddr *)&client_addr, sizeof(struct sockaddr));
-                                      if (bytesSent == -1) {
-                                        //bool isSent = send_packet(client_fd, client_addr, temp_packet_string,seqNum);
-                                        //if (isSent == false) {
-                                          perror("error re-sending data packet ! ");
-                                          exit(1);
-                                      } else {
-                                          sentPacketsNotAcked++;
-                                          alreadySentPackets++;
-                                          packetNotSents.erase(packetNotSents.begin() + j);
-                                      }
-                                      break;
-                                }
-                            }
-
-                            /** handle checksum error **/
-                            if (!found){
-                                for (int j = 0; j < packetsSent.size() ;j++){
-                                    packet spkt = packetsSent[j];
-                                    if (spkt.seqNo == seqNum){
-                                          found = true;
-                                          string temp_packet_string = data[seqNum];
-                                          struct packet data_packet = createPacket(temp_packet_string, seqNum);
-                                          char sendBuffer [maxSegSize];
-                                          memset(sendBuffer, 0, maxSegSize);
-                                          memcpy(sendBuffer, &data_packet, sizeof(data_packet));
-                                          ssize_t bytesSent = sendto(client_fd, sendBuffer, maxSegSize, 0, (struct sockaddr *)&client_addr, sizeof(struct sockaddr));
-                                          if (bytesSent == -1) {
-                                          //bool isSent = send_packet(client_fd, client_addr, temp_packet_string,seqNum);
-                                          //if (isSent == false) {
-                                              perror("error re-sending data packet ! ");
-                                              exit(1);
-                                          } else {
-                                              alreadySentPackets++;
-                                              packetsSent.erase(packetsSent.begin() + j);
-                                          }
-                                          break;
-                                    }
-                                }
-
-                            }
-
-                        }
-                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-
-                    } else if (lastAckedSeqNum < ack_seqNo) {
-                        /** new ack : compute new base and packet no. and handling congestion control FSM **/
-                        cout << "newAck " << endl;
-                        numberOfDupAcks = 0;
-                        lastAckedSeqNum = ack_seqNo;
-                        int advance = lastAckedSeqNum - base_packet_number;
-                        cwnd_base = cwnd_base - advance;
-                        base_packet_number = lastAckedSeqNum;
-                        if (st == slowStart){
-                           if (cwnd*2 >= sst){
-                                st = congestionAvoidance;
-                                cwnd++;
-                           }
-                           else{
-                               cwnd=cwnd*2;
-                           }
-                           //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                           // Write to the file
-                           myFile_Handler << cwnd << endl;
-                           if (cwnd >= sst){
-                                st = congestionAvoidance;
-                           }
-                        } else if (st == congestionAvoidance){
-                            cwnd ++;
-                            ///cwnd += (1 / floor(cwnd));
-                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                            // Write to the file
-                            myFile_Handler << cwnd << endl;
-                        } else if (st == fastRecovery){
-                            st = congestionAvoidance;
-                            cwnd = sst;
-                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                            // Write to the file
-                            myFile_Handler << cwnd << endl;
-                        }
-                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                        //cout << " base : " << cwnd_base << endl << flush;
-                        //cout << " packet : " << base_packet_number << endl << flush;
-                        sentPacketsNotAcked--;
-                    } else {
-                        sentPacketsNotAcked--;
-                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                    }
-
-                    if (sentPacketsNotAcked == 0){
-                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
-                        stillExistAcks = false;
-                    }
-
-                }
-
-            }
-
-        }
-
-
-        /** Handle Time Out **/
-        bool entered=false;
+bool handle_time_out(int client_fd, struct sockaddr_in client_addr , vector<string> data)
+{
+      bool entered=false;
         for (int j = 0; j < packetNotSents.size() ;j++){
             packetNotSent nspkt = packetNotSents[j];
             chrono::time_point<chrono::system_clock> current_time = chrono::system_clock::now();
@@ -492,9 +304,9 @@ void sendTheData_HandleCongesion (int client_fd, struct sockaddr_in client_addr 
                 
                  cout << "Timed Out ! " << endl << flush;
                  cout << "Re-transmitting the packet " << endl << flush;
-                 seqNum = nspkt.seqNo;
-                 string temp_packet_string = data[seqNum];
-                 struct packet data_packet = createPacket(temp_packet_string, seqNum);
+                 SeqNum = nspkt.seqNo;
+                 string temp_packet_string = data[SeqNum];
+                 struct packet data_packet = createPacket(temp_packet_string, SeqNum);
                  char sendBuffer [maxSegSize];
                  memset(sendBuffer, 0, maxSegSize);
                  memcpy(sendBuffer, &data_packet, sizeof(data_packet));
@@ -503,22 +315,227 @@ void sendTheData_HandleCongesion (int client_fd, struct sockaddr_in client_addr 
                         perror("error resending the data packet ! ");
                         exit(1);
                  } else {
-                        sentPacketsNotAcked++;
-                        alreadySentPackets++;
+                        SentPacketsNotAcked++;
+                        AlreadySentPackets++;
                         packetNotSents.erase(packetNotSents.begin() + j);
                         j--;
-                        cout << "Sent Seq Num : " << seqNum << endl << flush;
+                        cout << "Sent Seq Num : " << SeqNum << endl << flush;
                  }
             }
         }
+        return entered;
+}
+
+void handle_check_sum(bool found,int client_fd, struct sockaddr_in client_addr , vector<string> data)
+{
+                                  for (int j = 0; j < packetsSent.size() ;j++){
+                                    packet spkt = packetsSent[j];
+                                    if (spkt.seqNo == SeqNum){
+                                          found = true;
+                                          string temp_packet_string = data[SeqNum];
+                                          struct packet data_packet = createPacket(temp_packet_string, SeqNum);
+                                          char sendBuffer [maxSegSize];
+                                          memset(sendBuffer, 0, maxSegSize);
+                                          memcpy(sendBuffer, &data_packet, sizeof(data_packet));
+                                          ssize_t bytesSent = sendto(client_fd, sendBuffer, maxSegSize, 0, (struct sockaddr *)&client_addr, sizeof(struct sockaddr));
+                                          if (bytesSent == -1) {
+                                          //bool isSent = send_packet(client_fd, client_addr, temp_packet_string,seqNum);
+                                          //if (isSent == false) {
+                                              perror("error re-sending data packet ! ");
+                                              exit(1);
+                                          } else {
+                                              AlreadySentPackets++;
+                                              packetsSent.erase(packetsSent.begin() + j);
+                                          }
+                                          break;
+                                    }
+                                }
+}
+
+bool retransmit_loss_packet(bool found,int client_fd, struct sockaddr_in client_addr , vector<string> data)
+{
+
+    for (int j = 0; j < packetNotSents.size() ;j++){
+                                packetNotSent nspkt = packetNotSents[j];
+                                if (nspkt.seqNo == SeqNum){
+                                      found = true;
+                                      string temp_packet_string = data[SeqNum];
+                                      struct packet data_packet = createPacket(temp_packet_string, SeqNum);
+                                      char sendBuffer [maxSegSize];
+                                      memset(sendBuffer, 0, maxSegSize);
+                                      memcpy(sendBuffer, &data_packet, sizeof(data_packet));
+                                      ssize_t bytesSent = sendto(client_fd, sendBuffer, maxSegSize, 0, (struct sockaddr *)&client_addr, sizeof(struct sockaddr));
+                                      if (bytesSent == -1) {
+                                        //bool isSent = send_packet(client_fd, client_addr, temp_packet_string,seqNum);
+                                        //if (isSent == false) {
+                                          perror("error re-sending data packet ! ");
+                                          exit(1);
+                                      } else {
+                                          SentPacketsNotAcked++;
+                                          AlreadySentPackets++;
+                                          packetNotSents.erase(packetNotSents.begin() + j);
+                                      }
+                                      break;
+                                }
+                            }
+
+                            return found;
+}
+void sendTheData_HandleCongesion (int client_fd, struct sockaddr_in client_addr , vector<string> data){
+    ofstream myFile_Handler;
+    // File Open
+    myFile_Handler.open("File_1.txt");
+
+    int Cwnd_base = 0;
+    double Cwnd = 1;
+    //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+    // Write to the file
+    myFile_Handler << Cwnd << endl;
+   int TotalPackets = data.size();
+
+    while (Flag){
+
+        /**
+        this part will run first to send first datagram as stated in pdf.
+        **/
+        while(Cwnd_base < Cwnd && AlreadySentPackets + packetNotSents.size() < TotalPackets){
+            SeqNum = Base_packet_number + Cwnd_base;
+            string temp_packet_string = data[SeqNum];
+            /**
+                in case error simulated won't send the packet so the seqnumber will not correct at the receiver so will send duplicate ack.
+            **/
+            bool isSent = send_packet(client_fd, client_addr, temp_packet_string,SeqNum);
+            if (isSent == false) {
+                perror("Error sending data packet ! ");
+                //exit(1);
+            } else {
+                SentPacketsNotAcked++;
+                AlreadySentPackets++;
+                cout << "Sent Seq Num : " << SeqNum << endl << flush;
+            }
+            Cwnd_base++;
+        }
+	    //cout << "///////////////////////////////////"<< "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+	    //cout << "///////////////////////////////////"<< " base : " << cwnd_base << endl << flush;
+
+        /*** receiving ACKs ***/
+        if (SentPacketsNotAcked > 0){
+            StillExistAcks = true;
+            while (StillExistAcks){
+                cout << "waiting acwnd_baseck " << endl << flush;
+                ssize_t receivedBytes = recvfrom(client_fd, Rec_buf, AckPacketSize, 0, (struct sockaddr*)&client_addr, &ClientAddressLength);
+                if (receivedBytes < 0){
+                     perror("error receiving bytes ! ");
+                     exit(1);
+                }
+                else if (receivedBytes != AckPacketSize){
+                     cout << "Expecting Ack Got Something Else" << endl << flush;
+                     exit(1);
+                }
+                else {
+
+                    auto ack = (packetAck*) malloc(sizeof(packetAck));
+                    memcpy(ack, Rec_buf, AckPacketSize);
+                    cout << "Ack. " << ack->ackno << " Received." << endl << flush;
+
+                    if (getAckChecksum(ack->len, ack->ackno) != ack->checkSum){
+                        cout << "Corrupt Ack. received" << endl << flush ;
+                    }
+
+                    int ack_seqNo = ack->ackno;
+                    if (LastAckedSeqNum == ack_seqNo){
+                        NumberOfDupAcks++;
+                        SentPacketsNotAcked--;
+                        if (St == fastRecovery){
+                            Cwnd++;
+                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                            // Write to the file
+                            myFile_Handler << Cwnd << endl;
+                        } else if (NumberOfDupAcks == 3){
+                            Sst = Cwnd / 2;
+                            Cwnd = Sst + 3;
+                            cout << "///////////////////////////////////////////////////////////////// Triple duplicate Ack /////////////////////////////////////////////////////////////////////////" << endl;
+                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                            // Write to the file
+                            myFile_Handler << Cwnd << endl;
+                            St = fastRecovery;
+                            /** retransmit the lost packet **/
+                            SeqNum = ack_seqNo;
+                            bool found = false;
+                            found = retransmit_loss_packet( found, client_fd,  client_addr , data);
+                            /** handle checksum error **/
+                            if (!found){
+                                handle_check_sum( found, client_fd,  client_addr , data);
+                            }
+
+                        }
+                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+
+                    } else if (LastAckedSeqNum < ack_seqNo) {
+                        /** new ack : compute new base and packet no. and handling congestion control FSM **/
+                        cout << "newAck " << endl;
+                        NumberOfDupAcks = 0;
+                        LastAckedSeqNum = ack_seqNo;
+                        int advance = LastAckedSeqNum - Base_packet_number;
+                        Cwnd_base = Cwnd_base - advance;
+                        Base_packet_number = LastAckedSeqNum;
+                        if (St == slowStart){
+                           if (Cwnd*2 >= Sst){
+                                St = congestionAvoidance;
+                                Cwnd++;
+                           }
+                           else{
+                               Cwnd=Cwnd*2;
+                           }
+                           //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                           // Write to the file
+                           myFile_Handler << Cwnd << endl;
+                           if (Cwnd >= Sst){
+                                St = congestionAvoidance;
+                           }
+                        } else if (St == congestionAvoidance){
+                            Cwnd ++;
+                            ///cwnd += (1 / floor(cwnd));
+                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                            // Write to the file
+                            myFile_Handler << Cwnd << endl;
+                        } else if (St == fastRecovery){
+                            St = congestionAvoidance;
+                            Cwnd = Sst;
+                            //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                            // Write to the file
+                            myFile_Handler << Cwnd << endl;
+                        }
+                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                        //cout << " base : " << cwnd_base << endl << flush;
+                        //cout << " packet : " << base_packet_number << endl << flush;
+                        SentPacketsNotAcked--;
+                    } else {
+                        SentPacketsNotAcked--;
+                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                    }
+
+                    if (SentPacketsNotAcked == 0){
+                        //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
+                        StillExistAcks = false;
+                    }
+
+                }
+
+            }
+
+        }
+        /** Handle Time Out **/
+        bool entered=false;
+        entered = handle_time_out(client_fd,  client_addr , data);
         if(entered){
             entered=false;
-            cwnd=1;
+            Cwnd=1;
             //cwnd_base=0;
-            st = slowStart;
+            St = slowStart;
             //cout << "CWND : " << cwnd << " maxSegSize "<< endl << flush;
             // Write to the file
-            myFile_Handler << cwnd << endl;
+            myFile_Handler << Cwnd << endl;
         }
 
     }
@@ -527,17 +544,9 @@ void sendTheData_HandleCongesion (int client_fd, struct sockaddr_in client_addr 
     myFile_Handler.close();
 }
 
-bool send_packet(int client_fd, struct sockaddr_in client_addr , string temp_packet_string, int seqNum){
-     char sendBuffer [maxSegSize];
-     struct packet data_packet = createPacket(temp_packet_string, seqNum);
-     bool corrupt=corruptDatagram();
-     if(corrupt){
-         data_packet.checkSum=data_packet.checkSum-1;
-     }
-     memset(sendBuffer, 0, maxSegSize);
-     memcpy(sendBuffer, &data_packet, sizeof(data_packet));
-     //cout << data_packet.data << endl;
-     if (!corruptDatagram()&&!corrupt){
+bool send_packet_data(bool corrupt,int client_fd,char sendBuffer [maxSegSize],struct sockaddr_in client_addr ,struct packet data_packet ,int seqNum)
+{
+    if (!corruptDatagram()&&!corrupt){
          ssize_t bytesSent = sendto(client_fd, sendBuffer, maxSegSize, 0, (struct sockaddr *)&client_addr, sizeof(struct sockaddr));
          if (bytesSent == -1) {
                 return false;
@@ -555,6 +564,18 @@ bool send_packet(int client_fd, struct sockaddr_in client_addr , string temp_pac
 
         return false;
      }
+}
+bool send_packet(int client_fd, struct sockaddr_in client_addr , string temp_packet_string, int seqNum){
+     char sendBuffer [maxSegSize];
+     struct packet data_packet = createPacket(temp_packet_string, seqNum);
+     bool corrupt=corruptDatagram();
+     if(corrupt){
+         data_packet.checkSum=data_packet.checkSum-1;
+     }
+     memset(sendBuffer, 0, maxSegSize);
+     memcpy(sendBuffer, &data_packet, sizeof(data_packet));
+     //cout << data_packet.data << endl;
+     return send_packet_data( corrupt, client_fd,sendBuffer, client_addr , data_packet , seqNum);
 }
 
 
