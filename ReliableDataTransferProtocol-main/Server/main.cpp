@@ -23,23 +23,20 @@ using namespace std;
 #define AckPacketSize  8
 #define ChunkSize 499
 
-struct packet 
-{
-    uint32_t seqNo;
+struct packet {
     uint16_t cksum;
     uint16_t len;
+    uint32_t seqNo;
     char data [500];
 };
 
-struct not_sent_packet
-{
+struct not_sent_packet{
     int seqNo;
     bool isFinished;
     chrono::time_point<chrono::system_clock> timer;
 };
 
-struct ack_packet
-{
+struct ack_packet {
     uint16_t cksum;
     uint16_t len;
     uint32_t ackno;
