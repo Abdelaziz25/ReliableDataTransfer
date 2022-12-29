@@ -155,9 +155,9 @@ bool corruptDatagram()
     return false;
 }
 
-vector<string> readReq()
+vector<string> readInfo()
 {
-    string fName = "requests.txt";
+    string fName = "info.txt";
     vector<string> reqs;
     string line;
     ifstream f;
@@ -184,7 +184,7 @@ long checkFileExistence(string fName)
 
 int main()
 {
-    vector<string> args = readReq();
+    vector<string> args = readInfo();
     int portNo = stoi(args[0]);
     randomSeed = stoi(args[1]);
     srand(randomSeed);
