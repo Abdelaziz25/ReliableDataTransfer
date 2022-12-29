@@ -30,7 +30,9 @@ struct packetAck
     uint16_t len;
     uint32_t ackNo;
 };
-
+/*
+   read Commands from info.txt
+*/
 vector<string> readInfo()
 {
     string fName = "info.txt";
@@ -44,11 +46,18 @@ vector<string> readInfo()
     }
     return infos;
 }
+/*
+   this function is used to write file
+*/
 void writeFile (string fName, string data)
 {
     ofstream f_stream(fName.c_str());
     f_stream.write(data.c_str(), data.length());
 }
+
+/*
+  this function is used to getAckCheck sum
+*/
 uint16_t getAckChecksum(uint16_t len , uint32_t ackNo)
 {
     uint32_t sum = 0;
@@ -61,6 +70,9 @@ uint16_t getAckChecksum(uint16_t len , uint32_t ackNo)
     uint16_t Sum = (uint16_t) (~sum);
     return Sum;
 }
+/*
+   this function is used to get data check sum;
+*/
 uint16_t getDataChecksum(string content, uint16_t len , uint32_t seqNo)
 {
     uint32_t sum = 0;
@@ -78,6 +90,9 @@ uint16_t getDataChecksum(string content, uint16_t len , uint32_t seqNo)
     }
     return (uint16_t) (~sum);
 }
+/*
+ this function is used to create packet
+*/
 packet createPacket(string fName)
 {
     struct packet p;
@@ -87,6 +102,9 @@ packet createPacket(string fName)
     p.len = sizeof(p.checkSum) + sizeof(p.len) + sizeof(p.seqNo) + fName.length();
     return p;
 }
+/*
+  this function of send Ack
+*/
 void sendAck(int clientSocket, struct sockaddr_in serverAddress, int seqNo)
 {
     struct packetAck  pAck;
